@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 # ============================================================
-# ZENBABA BINGO - DEMO / FAKE MONEY VERSION
+# ZENBABA BINGO - DEMO / FAKE MONEY VERSION (FIXED)
 # ============================================================
 
 logging.basicConfig(
@@ -37,7 +37,7 @@ SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID", "0"))
 # GAME SETTINGS
 # ------------------------------------------------------------
 
-CARTELA_NAMES = list("ABCDEFGHIJKLMNOPQRST")  # A - T
+CARTELA_NAMES = list("ABCDEFGHIJKLMNOPQRST")
 MAX_CARTELAS_PER_PLAYER = 5
 
 STARTING_BALANCE = 10
@@ -86,9 +86,6 @@ class Round:
     winner_user_id: Optional[int] = None
 
     selected_bets: Dict[int, int] = field(default_factory=dict)
-
-    started_message_ids: Dict[int, int] = field(default_factory=dict)
-
     blinking: bool = False
 
 
@@ -100,12 +97,10 @@ players: Dict[int, Player] = {}
 cartelas: Dict[str, Cartela] = {}
 round_state = Round()
 
-# Global admin setting.
-# Only affects the NEXT round.
 AUTO_BINGO = True
 
-# Lock prevents simultaneous cartela registration/winner processing.
-game_lock = asyncio.Lock()
+# ⚠️ FIX: Lock በ module level አይፍጠር - በ main() ውስጥ ይፍጠር
+game_lock: Optional[asyncio.Lock] = None
 
 
 # ============================================================
@@ -113,16 +108,11 @@ game_lock = asyncio.Lock()
 # ============================================================
 
 def generate_cartelas():
-    """Generate A-T cartelas, each with 5 random unique numbers 1-100."""
     cartelas.clear()
-
     for name in CARTELA_NAMES:
         numbers = random.sample(range(1, 101), 5)
         cartelas[name] = Cartela(
-            name=name,
-            numbers=numbers,
-            owner_id=None,
-            bot_owned=False,
+            name=name, numbers=numbers, owner_id=None, bot_owned=False,
         )
 
 
@@ -142,9 +132,7 @@ generate_cartelas()
 def get_player(user_id: int, name: str = "") -> Player:
     if user_id not in players:
         players[user_id] = Player(
-            user_id=user_id,
-            name=name or "Player",
-            balance=STARTING_BALANCE,
+            user_id=user_id, name=name or "Player", balance=STARTING_BALANCE,
         )
     elif name:
         players[user_id].name = name
@@ -236,9 +224,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await update.message.reply_text(
-        text,
-        reply_markup=main_menu(),
-        parse_mode="Markdown",
+        text, reply_markup=main_menu(), parse_mode="Markdown",
     )
 
 
@@ -277,9 +263,7 @@ async def show_cartelas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("🔙 BACK", callback_data="back")])
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -330,9 +314,7 @@ async def select_cartela(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -373,32 +355,30 @@ async def register_cartela(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.owner_id = user.id
         player.cartel_names.append(name)
 
-        await query.answer("✅ Cartela Registered!", show_alert=True)
+    # ⚠️ FIX: Lock ውስጥ await አይጥራ - ከዚህ ውጭ ይላክ
+    await query.answer("✅ Cartela Registered!", show_alert=True)
 
-        text = (
-            f"🟢 **REGISTERED — CARTELA {name}**\n\n"
-            f"🔢 **{', '.join(map(str, c.numbers))}**\n\n"
-            "✅ Cartela registered successfully.\n"
-            f"💰 Remaining Demo Balance: **{player.balance} Birr**\n\n"
-            "⏳ The game will start when the round countdown begins."
+    text = (
+        f"🟢 **REGISTERED — CARTELA {name}**\n\n"
+        f"🔢 **{', '.join(map(str, c.numbers))}**\n\n"
+        "✅ Cartela registered successfully.\n"
+        f"💰 Remaining Demo Balance: **{player.balance} Birr**\n\n"
+        "⏳ The game will start when the round countdown begins."
+    )
+
+    keyboard = [
+        [InlineKeyboardButton("🎫 CHOOSE ANOTHER", callback_data="cartelas")],
+        [InlineKeyboardButton("🎮 VIEW GAME", callback_data="play")],
+    ]
+
+    await query.edit_message_text(
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
+    )
+
+    if not round_state.active and round_state.countdown_task is None:
+        round_state.countdown_task = asyncio.create_task(
+            start_round_countdown(context)
         )
-
-        keyboard = [
-            [InlineKeyboardButton("🎫 CHOOSE ANOTHER", callback_data="cartelas")],
-            [InlineKeyboardButton("🎮 VIEW GAME", callback_data="play")],
-        ]
-
-        await query.edit_message_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown",
-        )
-
-        # First registered cartela starts round countdown
-        if not round_state.active and round_state.countdown_task is None:
-            round_state.countdown_task = asyncio.create_task(
-                start_round_countdown(context)
-            )
 
 
 # ============================================================
@@ -439,9 +419,7 @@ async def play_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -452,9 +430,7 @@ async def play_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start_round_countdown(context: ContextTypes.DEFAULT_TYPE):
     try:
         for remaining in range(COUNTDOWN_SECONDS, 0, -1):
-            registered = [
-                c for c in cartelas.values() if c.owner_id is not None
-            ]
+            registered = [c for c in cartelas.values() if c.owner_id is not None]
 
             if not registered:
                 round_state.countdown_task = None
@@ -469,8 +445,7 @@ async def start_round_countdown(context: ContextTypes.DEFAULT_TYPE):
                 )
             elif remaining in (20, 15, 10, 5, 4, 3, 2, 1):
                 await broadcast(
-                    context,
-                    f"⏳ **BINGO STARTING IN {remaining} SECONDS...**"
+                    context, f"⏳ **BINGO STARTING IN {remaining} SECONDS...**"
                 )
 
             await asyncio.sleep(1)
@@ -478,6 +453,7 @@ async def start_round_countdown(context: ContextTypes.DEFAULT_TYPE):
         round_state.round_auto_mode = AUTO_BINGO
         round_state.auto_mode_locked = True
 
+        # ⚠️ FIX: begin_round ን በቀጥታ ጥራ
         await begin_round(context)
 
     except asyncio.CancelledError:
@@ -493,29 +469,29 @@ async def start_round_countdown(context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def begin_round(context: ContextTypes.DEFAULT_TYPE):
-    async with game_lock:
-        round_state.active = True
-        round_state.drawn_numbers.clear()
-        round_state.drawn_set.clear()
-        round_state.winner_cartela = None
-        round_state.winner_user_id = None
-        round_state.blinking = False
+    # ⚠️ FIX: Lock ውስጥ ረጅም ስራ አትስራ
+    round_state.active = True
+    round_state.drawn_numbers.clear()
+    round_state.drawn_set.clear()
+    round_state.winner_cartela = None
+    round_state.winner_user_id = None
+    round_state.blinking = False
 
-        # Bot takes all unused cartelas
-        for name, c in cartelas.items():
-            if c.owner_id is None:
-                c.bot_owned = True
+    # Bot takes all unused cartelas
+    for name, c in cartelas.items():
+        if c.owner_id is None:
+            c.bot_owned = True
 
-        mode = "AUTO ON 🤖" if round_state.round_auto_mode else "AUTO OFF 👤"
+    mode = "AUTO ON 🤖" if round_state.round_auto_mode else "AUTO OFF 👤"
 
-        await broadcast(
-            context,
-            "🚨 **BINGO STARTED!** 🚨\n\n"
-            f"🤖 Round Auto Mode: **{mode}**\n"
-            "🔒 Auto mode is LOCKED for this round.\n\n"
-            "🔢 Numbers will be drawn every **2 seconds**.\n"
-            "🏆 The first completed Cartela wins."
-        )
+    await broadcast(
+        context,
+        "🚨 **BINGO STARTED!** 🚨\n\n"
+        f"🤖 Round Auto Mode: **{mode}**\n"
+        "🔒 Auto mode is LOCKED for this round.\n\n"
+        "🔢 Numbers will be drawn every **2 seconds**.\n"
+        "🏆 The first completed Cartela wins."
+    )
 
     round_state.game_task = asyncio.create_task(run_game(context))
 
@@ -532,34 +508,22 @@ async def run_game(context: ContextTypes.DEFAULT_TYPE):
         while round_state.active and available_numbers:
             number = available_numbers.pop()
 
-            async with game_lock:
-                round_state.drawn_numbers.append(number)
-                round_state.drawn_set.add(number)
-
-            # Show spinning effect
-            await broadcast(
-                context,
-                "🎰 **DRAWING...**\n\n"
-                "🔄 🔄 🔄"
-            )
-
-            await asyncio.sleep(0.5)
+            round_state.drawn_numbers.append(number)
+            round_state.drawn_set.add(number)
 
             await broadcast(
                 context,
-                f"🎰 **NUMBER DRAWN**\n\n"
-                f"🟢 **{number}**\n\n"
-                f"📊 Numbers drawn: {len(round_state.drawn_numbers)}"
+                f"🎰 **NUMBER DRAWN: {number}**\n\n"
+                f"📊 Numbers drawn: **{len(round_state.drawn_numbers)}**"
             )
 
-            # Auto Bingo detection
             if round_state.round_auto_mode:
                 winner = find_completed_cartela()
                 if winner:
                     await finish_game(context, winner.name, winner.owner_id)
                     return
 
-            await asyncio.sleep(DRAW_INTERVAL - 0.5)
+            await asyncio.sleep(DRAW_INTERVAL)
 
         if round_state.active:
             await finish_without_winner(context)
@@ -629,14 +593,13 @@ async def finish_game(
     winner_name: str,
     winner_user_id: Optional[int],
 ):
-    async with game_lock:
-        if not round_state.active:
-            return
+    if not round_state.active:
+        return
 
-        round_state.active = False
-        round_state.winner_cartela = winner_name
-        round_state.winner_user_id = winner_user_id
-        round_state.blinking = True
+    round_state.active = False
+    round_state.winner_cartela = winner_name
+    round_state.winner_user_id = winner_user_id
+    round_state.blinking = True
 
     winner = cartelas.get(winner_name)
     prize = DEFAULT_PRIZE
@@ -646,32 +609,17 @@ async def finish_game(
         if player:
             player.balance += prize
 
-    # Blinking celebration
-    for i in range(4):
+    # Winner celebration
+    for _ in range(3):
         await broadcast(
             context,
-            (
-                "🟩🟩🟩 **BINGO WINNER** 🟩🟩🟩\n\n"
-                f"🏆 **Winning Cartela No: {winner_name}**\n\n"
-                f"🎉 **GOOD BINGO!**\n\n"
-                f"🔢 Winning numbers:\n"
-                f"**{', '.join(map(str, winner.numbers if winner else []))}**"
-            )
+            "🟩🟩🟩 **BINGO WINNER** 🟩🟩🟩\n\n"
+            f"🏆 **Winning Cartela: {winner_name}**\n\n"
+            f"🎉 **GOOD BINGO!**\n\n"
+            f"🔢 Winning numbers:\n"
+            f"**{', '.join(map(str, winner.numbers if winner else []))}**"
         )
-
-        await asyncio.sleep(0.5)
-
-        await broadcast(
-            context,
-            (
-                "🏆 **BINGO WINNER**\n\n"
-                f"🎫 Winning Cartela No: **{winner_name}**\n\n"
-                f"🔢 Drawn numbers:\n"
-                f"**{', '.join(map(str, round_state.drawn_numbers))}**"
-            )
-        )
-
-        await asyncio.sleep(0.5)
+        await asyncio.sleep(1.0)
 
     # Final result
     if winner and winner.owner_id is not None:
@@ -682,8 +630,7 @@ async def finish_game(
                 f"🏆 Winning Cartela No: **{winner_name}**\n\n"
                 f"💰 Prize: **{prize} Demo Birr**\n"
                 f"💳 New Balance: **{player.balance} Demo Birr**\n\n"
-                "🔎 You can compare the winning Cartela "
-                "with all drawn numbers."
+                "🔎 You can compare the winning Cartela with all drawn numbers."
             )
         else:
             result = (
@@ -695,8 +642,7 @@ async def finish_game(
             "🤖 **BOT WON THE GAME**\n\n"
             f"🏆 Winning Cartela No: **{winner_name}**\n\n"
             "❌ Your Cartela did not win this round.\n\n"
-            "🔎 You can compare the winning Cartela "
-            "with the drawn numbers."
+            "🔎 You can compare the winning Cartela with the drawn numbers."
         )
 
     await broadcast(context, result)
@@ -726,7 +672,6 @@ async def finish_without_winner(context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def prepare_next_round(context: ContextTypes.DEFAULT_TYPE):
-    # Reset
     for player in players.values():
         player.cartel_names.clear()
 
@@ -785,9 +730,7 @@ async def my_cartelas(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -818,9 +761,7 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -841,22 +782,19 @@ async def rules(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "5️⃣ When at least one Cartela is registered, a "
         "**30-second countdown** starts.\n\n"
         "6️⃣ At game start, unused Cartelas are controlled by the Bot.\n\n"
-        "7️⃣ Numbers are drawn randomly from 1–100 every "
-        "**2 seconds**.\n\n"
+        "7️⃣ Numbers are drawn randomly from 1–100 every **2 seconds**.\n\n"
         "8️⃣ The first completed Cartela wins.\n\n"
         "9️⃣ **AUTO ON:** the Bot automatically detects Bingo.\n\n"
-        "🔟 **AUTO OFF:** the player can press Bingo manually.\n\n"
+        "🔟 **AUTO OFF:** the player can press the BINGO! button manually.\n\n"
         "🔒 Auto mode is locked when the round starts.\n\n"
         "🏆 Winner receives **100 Demo Birr**.\n\n"
         "⚠️ **DEMO ONLY:** all balances are fake/demo credits."
     )
 
-    keyboard = InlineKeyboardButton("🔙 MENU", callback_data="back")
+    keyboard = [[InlineKeyboardButton("🔙 MENU", callback_data="back")]]
 
     await query.edit_message_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+        text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown",
     )
 
 
@@ -899,9 +837,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += "🎯 Current Round Mode: None\n"
 
     await update.message.reply_text(
-        text,
-        reply_markup=admin_keyboard(),
-        parse_mode="Markdown",
+        text, reply_markup=admin_keyboard(), parse_mode="Markdown",
     )
 
 
@@ -921,16 +857,14 @@ async def admin_toggle_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if round_state.active or round_state.auto_mode_locked:
         await query.answer(
-            "🔒 Auto Mode is locked for the current round.",
-            show_alert=True,
+            "🔒 Auto Mode is locked for the current round.", show_alert=True,
         )
         return
 
     AUTO_BINGO = not AUTO_BINGO
 
     await query.answer(
-        f"Auto Bingo {'ON' if AUTO_BINGO else 'OFF'}",
-        show_alert=True,
+        f"Auto Bingo {'ON' if AUTO_BINGO else 'OFF'}", show_alert=True,
     )
 
     text = (
@@ -941,9 +875,7 @@ async def admin_toggle_auto(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.edit_message_text(
-        text,
-        reply_markup=admin_keyboard(),
-        parse_mode="Markdown",
+        text, reply_markup=admin_keyboard(), parse_mode="Markdown",
     )
 
 
@@ -959,9 +891,7 @@ async def admin_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("❌ Super Admin only.", show_alert=True)
         return
 
-    player_count = sum(
-        1 for c in cartelas.values() if c.owner_id is not None
-    )
+    player_count = sum(1 for c in cartelas.values() if c.owner_id is not None)
 
     text = (
         "📊 **GAME STATUS**\n\n"
@@ -999,9 +929,7 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     await query.edit_message_text(
-        text,
-        reply_markup=admin_keyboard(),
-        parse_mode="Markdown",
+        text, reply_markup=admin_keyboard(), parse_mode="Markdown",
     )
 
 
@@ -1010,13 +938,10 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ============================================================
 
 async def broadcast(context: ContextTypes.DEFAULT_TYPE, text: str):
-    """Send a message to all known players."""
     for user_id in list(players.keys()):
         try:
             await context.bot.send_message(
-                chat_id=user_id,
-                text=text,
-                parse_mode="Markdown",
+                chat_id=user_id, text=text, parse_mode="Markdown",
             )
         except Exception as e:
             logger.warning("Broadcast failed for %s: %s", user_id, e)
@@ -1100,14 +1025,30 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============================================================
+# POST INIT (Create Lock inside running loop)
+# ============================================================
+
+async def post_init(application: Application):
+    """⚠️ FIX: game_lock ን በ async loop ውስጥ ይፍጠር"""
+    global game_lock
+    game_lock = asyncio.Lock()
+    logger.info("Game lock initialized")
+
+
+# ============================================================
 # MAIN
 # ============================================================
 
 def main():
+    global game_lock
+
     if not TOKEN:
         raise RuntimeError("BOT_TOKEN environment variable is missing.")
 
-    application = Application.builder().token(TOKEN).build()
+    # Start health server FIRST for Render
+    start_health_server()
+
+    application = Application.builder().token(TOKEN).post_init(post_init).build()
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("admin", admin))
@@ -1116,10 +1057,6 @@ def main():
 
     logger.info("ZENBABA BINGO is starting...")
 
-    # Start health server FIRST so Render detects the port
-    start_health_server()
-
-    # Then start polling
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
